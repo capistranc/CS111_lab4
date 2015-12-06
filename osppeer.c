@@ -23,6 +23,8 @@
 #include "md5.h"
 #include "osp2p.h"
 
+#include "sys/wait.h"
+
 static struct in_addr listen_addr;	// Define listening endpoint
 static int listen_port;
 
@@ -744,9 +746,29 @@ int main(int argc, char *argv[])
 	register_files(tracker_task, myalias);
 
 	// First, download files named on command line.
-	for (; argc > 1; argc--, argv++)
-		if ((t = start_download(tracker_task, argv[1])))
-			task_download(t, tracker_task);
+	
+	//task_t* tasks = (task_t*)malloc(sizeof(task_t) * argc); 
+
+	int num_download = 0;
+	for (; argc > 1; argc--, argv++) {
+	  if ((t = start_download(tracker_task, argv[1]))) {
+	    //num_download++;
+	    pid_t pid = fork();
+	    if (pid == 0) {
+	      task_download(t, tracker_task);
+	      num_download++;
+	      return 0;
+	    } else {
+	      continue;
+	    }
+	  }
+	}
+	int status;
+	while (num_download > 0) {
+	  waitpid(-1, &status, 0);
+	  num_download--;
+	}
+
 
 	// Then accept connections from other peers and upload files to them!
 	while ((t = task_listen(listen_task)))
