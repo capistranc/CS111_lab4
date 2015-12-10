@@ -40,7 +40,7 @@ static int listen_port;
  // Size of task_t::buf
 #define FILENAMESIZ	256	// Size of task_t::filename
 #define MAXFILESIZE 1024*1024 * 4 // 1 Max file size is 4MB 
-#define MINRATE 64 //Minimum download rate for a task otherwise conection is dropped. bytes transfered per block
+#define MINRATE 256 //Minimum download rate for a task otherwise conection is dropped. bytes transfered per block
 #define SAMPLESIZE 8 //Amount of samples used to check fsor download rate.
 
 typedef enum tasktype {		// Which type of connection is this?
@@ -55,6 +55,10 @@ typedef struct peer {		// A peer connection (TASK_DOWNLOAD)
 	struct in_addr addr;	// => Peer's IP address
 	int port;		// => Peer's port number
 	struct peer *next;
+	
+	int file_fd;
+	int transfer_rate;
+	int fail_rate;
 } peer_t;
 
 typedef struct task {
@@ -77,6 +81,8 @@ typedef struct task {
 				// function initializes this list;
 				// task_pop_peer() removes peers from it, one
 				// at a time, if a peer misbehaves.
+				
+	int peer_count;
 } task_t;
 
 
@@ -96,6 +102,7 @@ static task_t *task_new(tasktype_t type)
 	t->head = t->tail = 0;
 	t->total_written = 0;
 	t->peer_list = NULL;
+	t->peer_count = 0;
 
 	strcpy(t->filename, "");
 	strcpy(t->disk_filename, "");
@@ -125,6 +132,7 @@ static void task_pop_peer(task_t *t)
 			peer_t *n = t->peer_list->next;
 			free(t->peer_list);
 			t->peer_list = n;
+			t->peer_count--;
 		}
 	}
 }
@@ -510,14 +518,18 @@ task_t *start_download(task_t *tracker_task, const char *filename)
 
 	// add peers
 	s1 = tracker_task->buf;
+	int count = 0;
 	while ((s2 = memchr(s1, '\n', (tracker_task->buf + messagepos) - s1))) {
 		if (!(p = parse_peer(s1, s2 - s1)))
 			die("osptracker responded to WANT command with unexpected format!\n");
 		p->next = t->peer_list;
 		t->peer_list = p;
 		s1 = s2 + 1;
+		count++;
 	}
 
+	t->peer_count = count;
+	
 	if (s1 != tracker_task->buf + messagepos)
 		die("osptracker's response to WANT has unexpected format!\n");
 
@@ -549,15 +561,24 @@ static void task_download(task_t *t, task_t *tracker_task)
 		goto try_again;
 
 	// Connect to the peer and write the GET command
-	message("* Connecting to %s:%d to download '%s'\n",
-		inet_ntoa(t->peer_list->addr), t->peer_list->port,
-		t->filename);
-	t->peer_fd = open_socket(t->peer_list->addr, t->peer_list->port);
-	if (t->peer_fd == -1) {
-		error("* Cannot connect to peer: %s\n", strerror(errno));
-		goto try_again;
+	// Code was modified in order to download from multiple peers at a time, instead of storing
+	// The file descriptors in the task, the pertinent fd are stored on the peer
+	peer_t *current = t->peer_list;
+	while (current != NULL)
+	{
+		message("* Connecting to %s:%d to download '%s'\n",
+		inet_ntoa(current->addr), current->port, t->filename);
+		current->file_fd = open_socket(current->addr, current->port); //returns file descriptor to peers open socket
+		if (current->file_fd == -1) {
+			error("* Cannot connect to peer: %s\n", strerror(errno));
+			goto try_again;
+		}
+		
+		current = current->next;
+		osp2p_writef(current->file_fd, "GET %s OSP2P\n", t->filename);
 	}
-	osp2p_writef(t->peer_fd, "GET %s OSP2P\n", t->filename);
+	
+	
 
 	// Open disk file for the result.
 	// If the filename already exists, save the file in a name like

@@ -64,7 +64,7 @@ make run-popular:
 	of 65535.
 	
 make run-slow:
-	*Created globla variables SAMPLESIZE = 8, MINRATE = 128;
+	*Created globla variables SAMPLESIZE, MINRATE;
 	-task_download
 		In the while loop that reads data from the taskbuffer, we checked the average blocksize 
 		in the first SAMPLESIZE blocks of data transfered by write_from_taskbuf. If the average blocksize
