@@ -37,11 +37,12 @@ static int listen_port;
  */
 
 #define TASKBUFSIZ	65535
+
  // Size of task_t::buf
 #define FILENAMESIZ	256	// Size of task_t::filename
-#define MAXFILESIZE 1024*1024 * 4 // 1 Max file size is 4MB 
+#define MAXFILESIZ 1024*1024 * 4 // 1 Max file size is 4MB 
 #define MINRATE 256 //Minimum download rate for a task otherwise conection is dropped. bytes transfered per block
-#define SAMPLESIZE 8 //Amount of samples used to check fsor download rate.
+#define SAMPLESIZ 8 //Amount of samples used to check fsor download rate.
 
 typedef enum tasktype {		// Which type of connection is this?
 	TASK_TRACKER,		// => Tracker connection
@@ -608,6 +609,7 @@ static void task_download(task_t *t, task_t *tracker_task)
 
 	// Read the file into the task buffer from the peer,
 	// and write it from the task buffer onto disk.
+	// TODO : Modify this to download file from multiple peers
 	while (1) 
 	{
 		int ret = read_to_taskbuf(t->peer_fd, t);
@@ -617,35 +619,34 @@ static void task_download(task_t *t, task_t *tracker_task)
 		} else if (ret == TBUF_END && t->head == t->tail)
 			/* End of file */
 			break;
-
-
-
+	
+	
+	
 		ret = write_from_taskbuf(t->disk_fd, t);
 		if (ret == TBUF_ERROR) {
 			error("* Disk write error");
 			goto try_again;
 		}
 
-		if (t->total_written >= MAXFILESIZE) {
+		if (t->total_written >= MAXFILESIZ) {
 			error("** File is too large \n");
 			goto try_again;
 		}
 
 		num_blocks++;
 
-		if (num_blocks > SAMPLESIZE) {
+		if (num_blocks > SAMPLESIZ) 
+		{
 			avg_rate = t->total_written / num_blocks;
 			if (avg_rate < MINRATE) {
 				error("* Peer connection is too slow, dropping connection\n");
 				goto try_again;
 			}
-
+	
 		}
-
-
-
+		
 	}
-
+	
 	// Empty files are usually a symptom of some error.
 	if (t->total_written > 0) {
 		message("* Downloaded '%s' was %lu bytes long\n",
