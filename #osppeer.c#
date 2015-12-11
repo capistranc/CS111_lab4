@@ -49,18 +49,13 @@ typedef enum tasktype {		// Which type of connection is this?
 	TASK_PEER_LISTEN,	// => Listens for upload requests
 	TASK_UPLOAD,		// => Upload request (from peer to us)
 	TASK_DOWNLOAD		// => Download request (from us to peer)
-	TASK_DOWNLOAD_MULT_PEERS
-	TASK_UPLOAD_MULT_PEERS
 } tasktype_t;
 
 typedef struct peer {		// A peer connection (TASK_DOWNLOAD)
 	char alias[TASKBUFSIZ];	// => Peer's alias
 	struct in_addr addr;	// => Peer's IP address
 	int port;		// => Peer's port number
-	
-	//linked list members
 	struct peer *next;
-	struct peer *prev;
 	
 	int file_fd;
 	int transfer_rate;
@@ -69,8 +64,6 @@ typedef struct peer {		// A peer connection (TASK_DOWNLOAD)
 
 typedef struct task {
 	tasktype_t type;	// Type of connection
-	
-	char flag;
 
 	int peer_fd;		// File descriptor to peer/tracker, or -1
 	int disk_fd;		// File descriptor to local file, or -1
@@ -122,7 +115,7 @@ static task_t *task_new(tasktype_t type)
 //	Clears the 't' task's file descriptors and bounded buffer.
 //	Also removes and frees the front peer description for the task.
 //	The next call will refer to the next peer in line, if there is one.
-static void task_pop_peer(task_t *t, peer_t *p)
+static void task_pop_peer(task_t *t)
 {
 	if (t) {
 		// Close the file descriptors and bounded buffer
@@ -135,34 +128,12 @@ static void task_pop_peer(task_t *t, peer_t *p)
 		t->total_written = 0;
 		t->disk_filename[0] = '\0';
 
-		//if t has a peer list
+		// Move to the next peer
 		if (t->peer_list) {
-			//if peer to remove is specified:
-			if (p) {
-				if (p->prev == NULL && p->next == NULL) {
-					//do nothing
-				} else if (p->prev == NULL) {
-					p->next->prev = NULL;
-				} else if (p->next == NULL) {
-					p->prev->next = NULL;
-				} else {
-					p->next->prev = p->prev;
-					p->prev->next = p->next;
-				}
-				
-				if (p == t->peer_list) {
-					t->peer_list = p->next;
-				}
-				t->peer_count--;
-				free(p);
-			}
-			// else move the peer list pointer to the next peer
-			else {
-				peer_t *n = t->peer_list->next;
-				free(t->peer_list);
-				t->peer_list = n;
-				t->peer_count--;
-			}
+			peer_t *n = t->peer_list->next;
+			free(t->peer_list);
+			t->peer_list = n;
+			t->peer_count--;
 		}
 	}
 }
@@ -173,7 +144,7 @@ static void task_free(task_t *t)
 {
 	if (t) {
 		do {
-			task_pop_peer(t, NULL);
+			task_pop_peer(t);
 		} while (t->peer_list);
 		free(t);
 	}
@@ -598,10 +569,14 @@ static void task_download(task_t *t, task_t *tracker_task)
 	{
 		message("* Connecting to %s:%d to download '%s'\n",
 		inet_ntoa(current->addr), current->port, t->filename);
+		//before global fd for task - now each peer has its own fd
 		current->file_fd = open_socket(current->addr, current->port); //returns file descriptor to peers open socket
 		if (current->file_fd == -1) {
 			error("* Cannot connect to peer: %s\n", strerror(errno));
-			//goto try_again; instead of removing the top peer, we should 
+			//goto try_again;
+			//need to implement a task_remove_peer function
+			task_remove_peer(current);
+			//pop_peer(t);
 		}
 		
 		current = current->next;
@@ -641,7 +616,8 @@ static void task_download(task_t *t, task_t *tracker_task)
 	// TODO : Modify this to download file from multiple peers
 	while (1) 
 	{
-		int ret = read_to_taskbuf(t->peer_fd, t);
+		int ret = r
+ead_to_taskbuf(t->peer_fd, t);
 		if (ret == TBUF_ERROR) {
 			error("* Peer read error");
 			goto try_again;
@@ -696,7 +672,7 @@ static void task_download(task_t *t, task_t *tracker_task)
 	if (t->disk_filename[0])
 		unlink(t->disk_filename);
 	// recursive call
-	task_pop_peer(t, NULL);
+	task_pop_peer(t);
 	task_download(t, tracker_task);
 }
 
@@ -750,9 +726,6 @@ static void task_upload(task_t *t)
 	
 
 	assert(t->head == 0);
-	if (osp2p_snscanf(t->buf, t->tail, "GET -%c %s OSP2P\n", t->flag, t->filename) < 0) {
-		
-	}
 	if (osp2p_snscanf(t->buf, t->tail, "GET %s OSP2P\n", t->filename) < 0) {
 		error("* Odd request %.*s\n", t->tail, t->buf);
 		goto exit;
