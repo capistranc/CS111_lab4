@@ -65,12 +65,21 @@ typedef struct peer {		// A peer connection (TASK_DOWNLOAD)
 	int file_fd;
 	int transfer_rate;
 	int fail_rate;
+	
+	char buf[TASKBUFSIZ];
+	unsigned head;
+	unsigned tail;
+	
+	int block_offset;
 } peer_t;
 
 typedef struct task {
 	tasktype_t type;	// Type of connection
 	
+	//for segmented upload
 	char flag;
+	int block_offset;
+	int num_uploading_peers;
 
 	int peer_fd;		// File descriptor to peer/tracker, or -1
 	int disk_fd;		// File descriptor to local file, or -1
@@ -90,7 +99,12 @@ typedef struct task {
 				// task_pop_peer() removes peers from it, one
 				// at a time, if a peer misbehaves.
 				
+	peer_t *mutli_peer_list;
+	
+	
 	int peer_count;
+	int multi_peer_count;
+	int sucessful_peer_completions;
 } task_t;
 
 
@@ -110,7 +124,10 @@ static task_t *task_new(tasktype_t type)
 	t->head = t->tail = 0;
 	t->total_written = 0;
 	t->peer_list = NULL;
+	t->multi_peer_count = NULL;
 	t->peer_count = 0;
+	t->multi_peer_count = 0;
+	t->sucessful_peer_completions = 0;
 
 	strcpy(t->filename, "");
 	strcpy(t->disk_filename, "");
@@ -154,7 +171,6 @@ static void task_pop_peer(task_t *t, peer_t *p)
 					t->peer_list = p->next;
 				}
 				t->peer_count--;
-				free(p);
 			}
 			// else move the peer list pointer to the next peer
 			else {
@@ -162,7 +178,32 @@ static void task_pop_peer(task_t *t, peer_t *p)
 				free(t->peer_list);
 				t->peer_list = n;
 				t->peer_count--;
+				//maybe should we free memory of peer?
 			}
+		}
+	}
+}
+
+static void task_pop_peer(task_t *t)
+{
+	if (t) {
+		// Close the file descriptors and bounded buffer
+		if (t->peer_fd >= 0)
+			close(t->peer_fd);
+		if (t->disk_fd >= 0)
+			close(t->disk_fd);
+		t->peer_fd = t->disk_fd = -1;
+		t->head = t->tail = 0;
+		t->total_written = 0;
+		t->disk_filename[0] = '\0';
+
+		//if t has a peer list
+		if (t->peer_list) {
+			peer_t *n = t->peer_list->next;
+			free(t->peer_list);
+			t->peer_list = n;
+			t->peer_count--;
+			//maybe free memory of peer?
 		}
 	}
 }
@@ -577,7 +618,7 @@ static void task_download(task_t *t, task_t *tracker_task)
 {
 	int i, ret = -1, num_blocks = 0;
 	double avg_rate;
-	assert((!t || t->type == TASK_DOWNLOAD)
+	assert((!t || t->type == TASK_DOWNLOAD || t->type == TASK_DOWNLOAD_MULT_PEERS)
 	       && tracker_task->type == TASK_TRACKER);
 
 	// Quit if no peers, and skip this peer
@@ -601,11 +642,32 @@ static void task_download(task_t *t, task_t *tracker_task)
 		current->file_fd = open_socket(current->addr, current->port); //returns file descriptor to peers open socket
 		if (current->file_fd == -1) {
 			error("* Cannot connect to peer: %s\n", strerror(errno));
-			//goto try_again; instead of removing the top peer, we should 
+			//we remove this peer from our task altogther
+			if (current->next) {
+				current = current->next;
+				task_pop_peer(t, current->prev);
+			} else {
+				task_pop_peer(t, current);
+				current = t->peer_list;
+			}
 		}
 		
-		current = current->next;
 		osp2p_writef(current->file_fd, "GET %s OSP2P\n", t->filename);
+		
+		//add current onto task list of special peers
+		t->mutli_peer_list->prev = current;
+		current->next = t->mutli_peer_list;
+		t->mutli_peer_list = current;
+		t->multi_peer_count++;
+		
+		//remove current from task list of regular peers
+		if (current->next) {
+			current = current->next;
+			task_pop_peer(t, current->prev);
+		} else {
+			task_pop_peer(t, current);
+			current = t->peer_list;
+		}
 	}
 	
 	
@@ -635,10 +697,85 @@ static void task_download(task_t *t, task_t *tracker_task)
 		task_free(t);
 		return;
 	}
+	
+	//now we try a parallel download from multiple special peers, if we have any
+	current = t->mutli_peer_list;
+	while (current != NULL) {
+		int ret = read_to_taskbuf(t->peer_fd)
+		if (ret == TBUF_ERROR) {
+			error("* Peer read error");
+			goto not_special_peer;
+			t->sucessful_peer_completions++;
+			
+		} else if (ret == TBUF_END && t->head == t->tail) {}
+			/* End of peer's file*/
+			//remove peer from special peer list, but do nothing else because successful transfer
+			
+			break;
+		}
+		
+		//this should be modified to only write when there is a full block to write
+		//should only write that full block
+		ret = write_from_taskbuf(t->disk_fd, t);
+		if (ret == TBUF_ERROR) {
+			error("* Disk write error");
+			goto not_special_peer;
+		}
+
+		if (t->total_written >= MAXFILESIZ) {
+			error("** File is too large \n");
+			goto not_special_peer;
+		}
+
+		num_blocks++;
+
+		if (num_blocks > SAMPLESIZ) 
+		{
+			avg_rate = t->total_written / num_blocks;
+			if (avg_rate < MINRATE) {
+				error("* Peer connection is too slow, dropping connection\n");
+				goto not_special_peer;
+			}
+	
+		}
+		
+		//move on to next peer unless next peer is null, then move to beginning of multi peer list
+		if (current->next) {
+			curent = current->next;
+		} else {
+			current = t->mutli_peer_list;
+		}
+		continue;
+		
+		//remove peer from special peer list and submit another request for the file at this block offset
+		//however, this could be a valid regular peer, so put back onto regular peer list
+		//also increment successful peer completions
+		not_special_peer:
+	}
+	
+	//if special peer list is empty and we have sucessfully transfered all parts of the file
+	//check file recieved as normal
+	if (t->multi_peer_count == t->sucessful_peer_completions) {
+		goto multi_peer_transfer_done;
+	}
+	
+	//if special peer list is empty, but unable to complete file transfer, try regular type peers
+	//connect to peer and write GET command
+	current = t->peer_list;
+	if (current != NULL)
+	{
+		message("* Connecting to %s:%d to download '%s'\n",
+		inet_ntoa(current->addr), current->port, t->filename);
+		t->peer_fd = open_socket(current->addr, current->port); //returns file descriptor to peers open socket
+		if (t->peer_fd == -1) {
+			error("* Cannot connect to peer: %s\n", strerror(errno));
+			goto try_again;
+		}
+		osp2p_writef(t->peer_fd, "GET %s OSP2P\n", t->filename);
+	}
 
 	// Read the file into the task buffer from the peer,
-	// and write it from the task buffer onto disk.
-	// TODO : Modify this to download file from multiple peers
+	// and write it from the task buffer onto disk - serial type download
 	while (1) 
 	{
 		int ret = read_to_taskbuf(t->peer_fd, t);
@@ -676,6 +813,7 @@ static void task_download(task_t *t, task_t *tracker_task)
 		
 	}
 	
+	multi_peer_transfer_done:
 	// Empty files are usually a symptom of some error.
 	if (t->total_written > 0) {
 		message("* Downloaded '%s' was %lu bytes long\n",
@@ -750,10 +888,16 @@ static void task_upload(task_t *t)
 	
 
 	assert(t->head == 0);
-	if (osp2p_snscanf(t->buf, t->tail, "GET -%c %s OSP2P\n", t->flag, t->filename) < 0) {
-		
+	//protocol for multiple uploads
+	//t->flag lets you know that its a multi-upload
+	//t->num_blocks lets you know the spacing between blocks to upload (i.e. number of peers)
+	//t->block_offset lets you know the offset to start uploading at (i.e. peer number)
+	if (osp2p_snscanf(t->buf, t->tail, "GET -%c %i %i %s OSP2P\n", t->flag, t->num_blocks, t->block_offset, t->filename) >= 0) {
+		message("Uploading with block offset %d and block spacing of %d", t->block_offset, t->num_blocks);
 	}
-	if (osp2p_snscanf(t->buf, t->tail, "GET %s OSP2P\n", t->filename) < 0) {
+	else if (osp2p_snscanf(t->buf, t->tail, "GET %s OSP2P\n", t->filename) >= 0) {
+		message("Uploading serially");
+	} else {
 		error("* Odd request %.*s\n", t->tail, t->buf);
 		goto exit;
 	}
