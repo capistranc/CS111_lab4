@@ -194,7 +194,7 @@ static void task_pop_top_peer(task_t *t)
 			peer_t *n = t->peer_list->next;
 			free(t->peer_list);
 			t->peer_list = n;
-			t->peer_count--;
+			*t->peer_count--;
 		}
 	}
 }
@@ -653,7 +653,8 @@ static void register_files(task_t *tracker_task, const char *myalias)
 static peer_t *parse_peer(const char *s, size_t len)
 {
 	peer_t *p = (peer_t *) malloc(sizeof(peer_t));
-	if (p) {
+	if (p) 
+	{
 		p->next = NULL;
 		if (osp2p_snscanf(s, len, "PEER %s %I:%d",
 				  p->alias, &p->addr, &p->port) >= 0
@@ -679,15 +680,22 @@ static void remove_and_advance(task_t* t, peer_t* current, peer_t* peer_list, in
 }
 
 //add peer into doubly linked peer list
-static void add_peer(task_t* t, peer_t* p, peer_t* peer_list, int *count) {
-	if (peer_list) {
+static void add_peer(task_t* t, peer_t* p, peer_t* peer_list, int *count) 
+{	
+	error("1test %d\n", p->port);
+	if (peer_list != NULL) 
+	{
+		error("1\n");
 		peer_list->prev = p;
 		p->next = peer_list;
 	}
 	peer_list = p;
 	if (t) {
+		//error("3\n");
 		*count++;
 	}
+	//error("2\n");
+	//printf("count: nah peer_list_count: %d \n", *t->peer_count);
 }
 
 // start_download(tracker_task, filename)
@@ -741,13 +749,17 @@ task_t *start_download(task_t *tracker_task, const char *filename)
 
 	// add peers
 	s1 = tracker_task->buf;
-	t->peer_count = 0;
-	while ((s2 = memchr(s1, '\n', (tracker_task->buf + messagepos) - s1))) {
+	
+	while ((s2 = memchr(s1, '\n', (tracker_task->buf + messagepos) - s1))) 
+	{
 		if (!(p = parse_peer(s1, s2 - s1)))
 			die("osptracker responded to WANT command with unexpected format!\n");
 		/*p->next = t->peer_list;
 		t->peer_list = p;*/
+		//error("test %d\n", p->port);
+		
 		add_peer(t, p, t->peer_list, t->peer_count);
+		
 		s1 = s2 + 1;
 		//count++;
 	}
