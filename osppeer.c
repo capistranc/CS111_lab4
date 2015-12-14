@@ -37,6 +37,7 @@ static int listen_port;
  */
 
 #define TASKBUFSIZ	65535
+#define BLOCKSIZ 1024
 
  // Size of task_t::buf
 #define FILENAMESIZ	256	// Size of task_t::filename
@@ -70,7 +71,7 @@ typedef struct peer {		// A peer connection (TASK_DOWNLOAD)
 	unsigned head;
 	unsigned tail;
 	
-	int block_offset;
+	int block_offset; // This is essentially the peers id;
 } peer_t;
 
 typedef struct task {
@@ -274,7 +275,6 @@ taskbufresult_t write_from_taskbuf(int fd, task_t *t)
 	unsigned headpos = (t->head % TASKBUFSIZ);
 	unsigned tailpos = (t->tail % TASKBUFSIZ);
 	ssize_t amt;
-		
 
 	if (t->head == t->tail)
 		return TBUF_END;
@@ -290,7 +290,37 @@ taskbufresult_t write_from_taskbuf(int fd, task_t *t)
 		return TBUF_ERROR;
 	else if (amt == 0)
 		return TBUF_END;
-	else {
+	else 
+	{
+		t->head += amt;
+		t->total_written += amt;
+		return TBUF_OK;
+	}
+}
+
+//read_from_taskbuf using positional pwrite
+taskbufresult_t write_from_taskbuf2(int fd, task_t *t)
+{
+	unsigned headpos = (t->head % BLOCKSIZ);
+	unsigned tailpos = (t->tail % BLOCKSIZ);
+	ssize_t amt;
+	
+	if (t->head == t->tail)
+		return TBUF_END;
+	else if (headpos < tailpos)
+		amt = pwrite(fd, &t->buf[headpos], tailpos - headpos, t->block_offset);
+	else
+		amt = pwrite(fd, &t->buf[headpos], BLOCKSIZ - headpos, t->block_offset);
+
+	if (amt == -1 && (errno == EINTR || errno == EAGAIN
+			  || errno == EWOULDBLOCK))
+		return TBUF_AGAIN;
+	else if (amt == -1)
+		return TBUF_ERROR;
+	else if (amt == 0)
+		return TBUF_END;
+	else 
+	{
 		t->head += amt;
 		t->total_written += amt;
 		return TBUF_OK;
@@ -700,19 +730,20 @@ static void task_download(task_t *t, task_t *tracker_task)
 	
 	//now we try a parallel download from multiple special peers, if we have any
 	current = t->mutli_peer_list;
-	while (current != NULL) {
+	while (current != NULL) 
+	{
 		int ret = read_to_taskbuf(t->peer_fd)
 		if (ret == TBUF_ERROR) {
 			error("* Peer read error");
 			goto not_special_peer;
 			t->sucessful_peer_completions++;
 			
-		} else if (ret == TBUF_END && t->head == t->tail) {}
+		} else if (ret == TBUF_END && t->head == t->tail) {
 			/* End of peer's file*/
 			//remove peer from special peer list, but do nothing else because successful transfer
-			
 			break;
 		}
+	
 		
 		//this should be modified to only write when there is a full block to write
 		//should only write that full block
@@ -933,25 +964,61 @@ static void task_upload(task_t *t)
 		error("* Cannot open file %s", t->filename);
 		goto exit;
 	}
+	
+	
+	//Instead of writing to the tasks peer_fd, we store this on the peers file_fd instead.
 
-	message("* Transferring file %s\n", t->filename);
-	// Now, read file from disk and write it to the requesting peer.
-	while (1) {
-		int ret = write_from_taskbuf(t->peer_fd, t);
-		if (ret == TBUF_ERROR) {
-			error("* Peer write error");
-			goto exit;
+	
+	if (t->flag) //Run upload for multiple peers
+	{
+		peer_t current = t->peer_list;
+		while(current != NULL) 
+		{
+			if (current->block_offset == t->block_offset)
+				break;
+			current = current->next;
 		}
+		
+		message("* Transferring file %s from peer %d\n", t->filename, t->block_offset);
+		
+		while (1) 
+		{
+			int ret = write_from_taskbuf2(current->file_fd, t);
+			if (ret == TBUF_ERROR) {
+				error("* Peer write error");
+				goto exit;
+			}
 
-		ret = read_to_taskbuf(t->disk_fd, t);
-		if (ret == TBUF_ERROR) {
-			error("* Disk read error");
-			goto exit;
-		} else if (ret == TBUF_END && t->head == t->tail)
-			/* End of file */
-			break;
+			ret = read_to_taskbuf(t->disk_fd, t);
+			if (ret == TBUF_ERROR) {
+				error("* Disk read error");
+				goto exit;
+			} else if (ret == TBUF_END && t->head == t->tail)
+				/* End of file */
+				break;
+			}
+	} 
+	else //Do the standard procedure
+	{
+		message("* Transferring file %s\n", t->filename);
+		// Now, read file from disk and write it to the requesting peer.
+		while (1) 
+		{
+			int ret = write_from_taskbuf(t->peer_fd, t);
+			if (ret == TBUF_ERROR) {
+				error("* Peer write error");
+				goto exit;
+			}
+
+			ret = read_to_taskbuf(t->disk_fd, t);
+			if (ret == TBUF_ERROR) {
+				error("* Disk read error");
+				goto exit;
+			} else if (ret == TBUF_END && t->head == t->tail)
+				/* End of file */
+				break;
+		}
 	}
-
 	message("* Upload of %s complete\n", t->filename);
 
     exit:
