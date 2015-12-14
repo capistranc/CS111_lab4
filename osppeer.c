@@ -104,8 +104,8 @@ typedef struct task {
 	peer_t *multi_peer_list;
 	
 	
-	int peer_count;
-	int multi_peer_count;
+	int *peer_count;
+	int *multi_peer_count;
 	int in_progress_transfers;
 } task_t;
 
@@ -126,9 +126,13 @@ static task_t *task_new(tasktype_t type)
 	t->head = t->tail = 0;
 	t->total_written = 0;
 	t->peer_list = NULL;
-	t->multi_peer_count = 0;
-	t->peer_count = 0;
-	t->multi_peer_count = 0;
+	
+	t->multi_peer_count = (int *) malloc(sizeof (int));
+	t->peer_count = (int *) malloc(sizeof (int));
+	
+	*t->multi_peer_count = 0;
+	*t->peer_count = 0;
+
 	t->in_progress_transfers = 0;
 
 	strcpy(t->filename, "");
@@ -164,7 +168,7 @@ static void task_pop_peer(task_t *t, peer_t *p, peer_t *peer_list, int *count)
 				if (p == peer_list) {
 					t->peer_list = p->next;
 				}
-				count--;
+				*count--;
 			}
 		}
 		//we don't dispose of peer members in this function
@@ -301,7 +305,7 @@ taskbufresult_t read_to_taskbuf2(int fd, task_t *t)
 		amt = pread(fd, &t->buf[tailpos], headpos - tailpos, t->block_offset);
 	
 	if (amt == BLOCKSIZ - tailpos || amt == headpos - tailpos)
-		t->block_offset += t->multi_peer_count * BLOCKSIZ;
+		t->block_offset += *t->multi_peer_count * BLOCKSIZ;
 
 	if (amt == -1 && (errno == EINTR || errno == EAGAIN
 			  || errno == EWOULDBLOCK))
@@ -335,7 +339,7 @@ taskbufresult_t read_to_pbuf(peer_t *p, task_t *t)
 		amt = pread(fd, &p->buf[tailpos], headpos - tailpos, p->block_offset);
 	
 	if (amt == BLOCKSIZ - tailpos || amt == headpos - tailpos)
-		p->block_offset += t->multi_peer_count * BLOCKSIZ;
+		p->block_offset += *t->multi_peer_count * BLOCKSIZ;
 
 	if (amt == -1 && (errno == EINTR || errno == EAGAIN
 			  || errno == EWOULDBLOCK))
@@ -367,7 +371,7 @@ taskbufresult_t write_from_pbuf(peer_t *p, task_t *t)
 		amt = pwrite(fd, &p->buf[headpos], BLOCKSIZ - headpos, p->block_offset);
 	
 	if (amt == BLOCKSIZ - tailpos || amt == headpos - tailpos)
-		p->block_offset += t->multi_peer_count * BLOCKSIZ;
+		p->block_offset += *t->multi_peer_count * BLOCKSIZ;
 
 	if (amt == -1 && (errno == EINTR || errno == EAGAIN
 			  || errno == EWOULDBLOCK))
@@ -402,7 +406,7 @@ taskbufresult_t write_from_taskbuf2(int fd, task_t *t)
 		amt = pwrite(fd, &t->buf[headpos], BLOCKSIZ - headpos, t->block_offset);
 	
 	if (amt == BLOCKSIZ - tailpos || amt == headpos - tailpos)
-		t->block_offset += t->multi_peer_count * BLOCKSIZ;
+		t->block_offset += *t->multi_peer_count * BLOCKSIZ;
 
 	if (amt == -1 && (errno == EINTR || errno == EAGAIN
 			  || errno == EWOULDBLOCK))
@@ -743,7 +747,7 @@ task_t *start_download(task_t *tracker_task, const char *filename)
 			die("osptracker responded to WANT command with unexpected format!\n");
 		/*p->next = t->peer_list;
 		t->peer_list = p;*/
-		add_peer(t, p, t->peer_list, &t->peer_count);
+		add_peer(t, p, t->peer_list, t->peer_count);
 		s1 = s2 + 1;
 		//count++;
 	}
@@ -778,6 +782,7 @@ static void task_download(task_t *t, task_t *tracker_task)
 		return;
 	} 
 	
+	error("DO WE GET HERE");
 	// Open disk file for the result.
 	// If the filename already exists, save the file in a name like
 	// "foo.txt~1~".  However, if there are 50 local files, don't download
@@ -814,7 +819,7 @@ static void task_download(task_t *t, task_t *tracker_task)
 	while (current != NULL) {
 		if (current->addr.s_addr == listen_addr.s_addr
 		   && current->port == listen_port) {
-			   task_pop_peer(t, current, t->peer_list, &t->peer_count);
+			   task_pop_peer(t, current, t->peer_list, t->peer_count);
 		   }
 	}
 	
@@ -833,25 +838,25 @@ static void task_download(task_t *t, task_t *tracker_task)
 		if (current->file_fd == -1) {
 			error("* Cannot connect to peer: %s\n", strerror(errno));
 			//we remove this peer from our task altogther and move onto the next peer in line
-			remove_and_advance(t, current, t->peer_list, &t->peer_count);
+			remove_and_advance(t, current, t->peer_list, t->peer_count);
 		}
 		
-		current->block_offset = t->multi_peer_count;
+		current->block_offset = *t->multi_peer_count;
 		
 		//add current onto task list of special peers
-		add_peer(t, current, t->multi_peer_list, &t->multi_peer_count);
+		add_peer(t, current, t->multi_peer_list, t->multi_peer_count);
 		
 		//remove current from task list of regular peers
-		remove_and_advance(t, current, t->peer_list, &t->peer_count);
+		remove_and_advance(t, current, t->peer_list, t->peer_count);
 	}
 	
 	current = t->multi_peer_list;
 	while (current != NULL) {
 		//if connection established, we write our file request
-		current->num_uploading_peers = t->multi_peer_count;
+		current->num_uploading_peers = *t->multi_peer_count;
 		osp2p_writef(current->file_fd, "GET -%c %i %i %s OSP2P\n", 'm', current->num_uploading_peers, current->block_offset, t->filename);
 	}
-	t->in_progress_transfers = t->multi_peer_count;
+	t->in_progress_transfers = *t->multi_peer_count;
 
 	
 	//now we try a parallel download from multiple special peers, if we have any
@@ -866,7 +871,7 @@ static void task_download(task_t *t, task_t *tracker_task)
 		} else if (ret == TBUF_END && t->head == t->tail) {
 			/* End of peer's file*/
 			//remove peer from special peer list and advance to next peer, but do nothing else because successful transfer
-			remove_and_advance(t, current, t->multi_peer_list, &t->multi_peer_count);
+			remove_and_advance(t, current, t->multi_peer_list, t->multi_peer_count);
 			//if that was on the end of this list, move back to beginning of list before reentering while loop
 			if (current == NULL) 
 				current = t->multi_peer_list;
@@ -914,9 +919,9 @@ static void task_download(task_t *t, task_t *tracker_task)
 		//however, this could be a valid regular peer, so put back onto regular peer list
 		//also increment successful peer completions
 		not_special_peer:
-		add_peer(t, current, t->peer_list, &t->peer_count);
+		add_peer(t, current, t->peer_list, t->peer_count);
 		peer_t* prev = current;
-		remove_and_advance(t, current, t->multi_peer_list, &t->multi_peer_count);
+		remove_and_advance(t, current, t->multi_peer_list, t->multi_peer_count);
 		if (current) {
 			osp2p_writef(current->file_fd, "GET -%c %i %i %s OSP2P\n", 'm', prev->num_uploading_peers, prev->block_offset, t->filename);
 		}
