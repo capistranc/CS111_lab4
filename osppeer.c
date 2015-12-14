@@ -49,8 +49,8 @@ typedef enum tasktype {		// Which type of connection is this?
 	TASK_TRACKER,		// => Tracker connection
 	TASK_PEER_LISTEN,	// => Listens for upload requests
 	TASK_UPLOAD,		// => Upload request (from peer to us)
-	TASK_DOWNLOAD		// => Download request (from us to peer)
-	TASK_DOWNLOAD_MULT_PEERS
+	TASK_DOWNLOAD,		// => Download request (from us to peer)
+	TASK_DOWNLOAD_MULT_PEERS,
 	TASK_UPLOAD_MULT_PEERS
 } tasktype_t;
 
@@ -71,6 +71,7 @@ typedef struct peer {		// A peer connection (TASK_DOWNLOAD)
 	unsigned head;
 	unsigned tail;
 	
+	int num_uploading_peers;
 	int block_offset; // This is essentially the peers id;
 } peer_t;
 
@@ -100,7 +101,7 @@ typedef struct task {
 				// task_pop_peer() removes peers from it, one
 				// at a time, if a peer misbehaves.
 				
-	peer_t *mutli_peer_list;
+	peer_t *multi_peer_list;
 	
 	
 	int peer_count;
@@ -125,7 +126,7 @@ static task_t *task_new(tasktype_t type)
 	t->head = t->tail = 0;
 	t->total_written = 0;
 	t->peer_list = NULL;
-	t->multi_peer_count = NULL;
+	t->multi_peer_count = 0;
 	t->peer_count = 0;
 	t->multi_peer_count = 0;
 	t->in_progress_transfers = 0;
@@ -140,7 +141,7 @@ static task_t *task_new(tasktype_t type)
 //	Clears the 't' task's file descriptors and bounded buffer.
 //	Also removes and frees the front peer description for the task.
 //	The next call will refer to the next peer in line, if there is one.
-static void task_pop_peer(task_t *t, peer_t *p, peer_t* peer_list, int& count)
+static void task_pop_peer(task_t *t, peer_t *p, peer_t *peer_list, int *count)
 {
 	if (t) {
 		//we don't modify the buffers of the peer or its file descriptors
@@ -171,7 +172,7 @@ static void task_pop_peer(task_t *t, peer_t *p, peer_t* peer_list, int& count)
 }
 
 //stronger case for popping peer - here we reset buffers and dispose of peer
-static void task_pop_peer(task_t *t)
+static void task_pop_top_peer(task_t *t)
 {
 	if (t) {
 		// Close the file descriptors and bounded buffer
@@ -203,7 +204,7 @@ static void task_free(task_t *t)
 	//we should probably handle our additional members and file descriptors here
 	if (t) {
 		do {
-			task_pop_peer(t);
+			task_pop_top_peer(t);
 		} while (t->peer_list);
 		free(t);
 	}
@@ -287,6 +288,106 @@ taskbufresult_t write_from_taskbuf(int fd, task_t *t)
 }
 
 //read_from_taskbuf using positional pwrite
+///////////////////////////
+taskbufresult_t read_to_taskbuf2(int fd, task_t *t)
+{
+	unsigned headpos = (t->head % BLOCKSIZ);
+	unsigned tailpos = (t->tail % BLOCKSIZ);
+	ssize_t amt;
+
+	if (t->head == t->tail || headpos < tailpos)
+		amt = pread(fd, &t->buf[tailpos], BLOCKSIZ - tailpos, t->block_offset);
+	else
+		amt = pread(fd, &t->buf[tailpos], headpos - tailpos, t->block_offset);
+	
+	if (amt == BLOCKSIZ - tailpos || amt == headpos - tailpos)
+		t->block_offset += t->multi_peer_count * BLOCKSIZ;
+
+	if (amt == -1 && (errno == EINTR || errno == EAGAIN
+			  || errno == EWOULDBLOCK))
+		return TBUF_AGAIN;
+	else if (amt == -1)
+		return TBUF_ERROR;
+	else if (amt == 0)
+		return TBUF_END;
+	else {
+		t->tail += amt;
+		return TBUF_OK;
+	}
+}
+
+
+
+
+/////////////////
+
+taskbufresult_t read_to_pbuf(peer_t *p, task_t *t)
+{
+	int fd = p->file_fd;
+	unsigned headpos = (p->head % BLOCKSIZ);
+	unsigned tailpos = (p->tail % BLOCKSIZ);
+	ssize_t amt;
+	
+
+	if (t->head == t->tail || headpos < tailpos)
+		amt = pread(fd, &p->buf[tailpos], BLOCKSIZ - tailpos, p->block_offset);
+	else
+		amt = pread(fd, &p->buf[tailpos], headpos - tailpos, p->block_offset);
+	
+	if (amt == BLOCKSIZ - tailpos || amt == headpos - tailpos)
+		p->block_offset += t->multi_peer_count * BLOCKSIZ;
+
+	if (amt == -1 && (errno == EINTR || errno == EAGAIN
+			  || errno == EWOULDBLOCK))
+		return TBUF_AGAIN;
+	else if (amt == -1)
+		return TBUF_ERROR;
+	else if (amt == 0)
+		return TBUF_END;
+	else {
+		p->tail += amt;
+		t->tail += amt;
+		return TBUF_OK;
+	}
+}
+
+//read_from_taskbuf using positional pwrite
+taskbufresult_t write_from_pbuf(peer_t *p, task_t *t)
+{
+	unsigned headpos = (p->head % BLOCKSIZ);
+	unsigned tailpos = (p->tail % BLOCKSIZ);
+	ssize_t amt;
+	int fd = t->disk_fd;
+	
+	if (t->head == t->tail)
+		return TBUF_END;
+	else if (headpos < tailpos)
+		amt = pwrite(fd, &p->buf[headpos], tailpos - headpos, p->block_offset);
+	else
+		amt = pwrite(fd, &p->buf[headpos], BLOCKSIZ - headpos, p->block_offset);
+	
+	if (amt == BLOCKSIZ - tailpos || amt == headpos - tailpos)
+		p->block_offset += t->multi_peer_count * BLOCKSIZ;
+
+	if (amt == -1 && (errno == EINTR || errno == EAGAIN
+			  || errno == EWOULDBLOCK))
+		return TBUF_AGAIN;
+	else if (amt == -1)
+		return TBUF_ERROR;
+	else if (amt == 0)
+		return TBUF_END;
+	else 
+	{
+		p->head += amt;
+		t->head += amt;
+		t->total_written += amt;
+		return TBUF_OK;
+	}
+}
+
+
+
+//write_from_taskbuf using positional pwrite
 taskbufresult_t write_from_taskbuf2(int fd, task_t *t)
 {
 	unsigned headpos = (t->head % BLOCKSIZ);
@@ -299,6 +400,9 @@ taskbufresult_t write_from_taskbuf2(int fd, task_t *t)
 		amt = pwrite(fd, &t->buf[headpos], tailpos - headpos, t->block_offset);
 	else
 		amt = pwrite(fd, &t->buf[headpos], BLOCKSIZ - headpos, t->block_offset);
+	
+	if (amt == BLOCKSIZ - tailpos || amt == headpos - tailpos)
+		t->block_offset += t->multi_peer_count * BLOCKSIZ;
 
 	if (amt == -1 && (errno == EINTR || errno == EAGAIN
 			  || errno == EWOULDBLOCK))
@@ -314,6 +418,7 @@ taskbufresult_t write_from_taskbuf2(int fd, task_t *t)
 		return TBUF_OK;
 	}
 }
+
 
 
 /******************************************************************************
@@ -556,21 +661,21 @@ static peer_t *parse_peer(const char *s, size_t len)
 }
 
 
-static void remove_and_advance(task_t* t, peer_t* current, peer_t* peer_list, int& count) {
+static void remove_and_advance(task_t* t, peer_t* current, peer_t* peer_list, int *count) {
 	//if there is a peer after this one
 	if (current->next) {
 		//advance to it and remove the previous (formerly current) peer
 		current = current->next;
-		task_pop_peer(t, current->prev, peer_list, &count);
+		task_pop_peer(t, current->prev, peer_list, count);
 	} else {
 		//we are at end of peer list, so just pop off current peer and set current to NULL
-		task_pop_peer(t, current, peer_list, &count);
+		task_pop_peer(t, current, peer_list, count);
 		current = NULL;
 	}
 }
 
 //add peer into doubly linked peer list
-static void add_peer(task_t* t, peer_t* p, peer_t* peer_list, &int count) {
+static void add_peer(task_t* t, peer_t* p, peer_t* peer_list, int *count) {
 	if (peer_list) {
 		peer_list->prev = p;
 		p->next = peer_list;
@@ -734,7 +839,7 @@ static void task_download(task_t *t, task_t *tracker_task)
 		current->block_offset = t->multi_peer_count;
 		
 		//add current onto task list of special peers
-		add_peer(t, current, mutli_peer_list, &t->multi_peer_count);
+		add_peer(t, current, t->multi_peer_list, &t->multi_peer_count);
 		
 		//remove current from task list of regular peers
 		remove_and_advance(t, current, t->peer_list, &t->peer_count);
@@ -743,27 +848,28 @@ static void task_download(task_t *t, task_t *tracker_task)
 	current = t->multi_peer_list;
 	while (current != NULL) {
 		//if connection established, we write our file request
-		current->num_blocks = t->multi_peer_count;
-		osp2p_writef(current->file_fd, "GET -%c %i %i %s OSP2P\n", 'm', current->num_blocks, current->block_offset, t->filename);
+		current->num_uploading_peers = t->multi_peer_count;
+		osp2p_writef(current->file_fd, "GET -%c %i %i %s OSP2P\n", 'm', current->num_uploading_peers, current->block_offset, t->filename);
 	}
 	t->in_progress_transfers = t->multi_peer_count;
 
 	
 	//now we try a parallel download from multiple special peers, if we have any
-	current = t->mutli_peer_list;
+	current = t->multi_peer_list;
 	while (current != NULL) 
 	{
 		//this probably needs to be called with addiotnal and appropriate arguments
-		int ret = read_to_taskbuf(current->file_fd)
+		int ret = read_to_pbuf(current, t);
 		if (ret == TBUF_ERROR) {
 			error("* Peer read error");
 			goto not_special_peer;
 		} else if (ret == TBUF_END && t->head == t->tail) {
 			/* End of peer's file*/
 			//remove peer from special peer list and advance to next peer, but do nothing else because successful transfer
-			remove_and_advance(t, current, t->multi_peer_list, &t->mutli_peer_count);
+			remove_and_advance(t, current, t->multi_peer_list, &t->multi_peer_count);
 			//if that was on the end of this list, move back to beginning of list before reentering while loop
-			if (current = NULL) current = t->mutli_peer_list;
+			if (current == NULL) 
+				current = t->multi_peer_list;
 			t->in_progress_transfers--;
 			continue;
 		}
@@ -771,7 +877,8 @@ static void task_download(task_t *t, task_t *tracker_task)
 		
 		//this should be modified to only write when there is a full block to write
 		//should only write that full block
-		ret = write_from_taskbuf(t->disk_fd, t);
+		if (current->tail % BLOCKSIZ == 0 && current->tail != 0)
+			ret = write_from_pbuf(current, t);
 		if (ret == TBUF_ERROR) {
 			error("* Disk write error");
 			goto not_special_peer;
@@ -797,9 +904,9 @@ static void task_download(task_t *t, task_t *tracker_task)
 		
 		//move on to next peer unless next peer is null, then move to beginning of multi peer list
 		if (current->next) {
-			curent = current->next;
+			current = current->next;
 		} else {
-			current = t->mutli_peer_list;
+			current = t->multi_peer_list;
 		}
 		continue;
 		
@@ -811,7 +918,7 @@ static void task_download(task_t *t, task_t *tracker_task)
 		peer_t* prev = current;
 		remove_and_advance(t, current, t->multi_peer_list, &t->multi_peer_count);
 		if (current) {
-			osp2p_writef(current->file_fd, "GET -%c %i %i %s OSP2P\n", 'm', prev->num_blocks, prev->block_offset, t->filename);
+			osp2p_writef(current->file_fd, "GET -%c %i %i %s OSP2P\n", 'm', prev->num_uploading_peers, prev->block_offset, t->filename);
 		}
 	}
 	
@@ -896,7 +1003,7 @@ static void task_download(task_t *t, task_t *tracker_task)
 	if (t->disk_filename[0])
 		unlink(t->disk_filename);
 	// recursive call
-	task_pop_peer(t);
+	task_pop_top_peer(t);
 	task_download(t, tracker_task);
 }
 
@@ -954,8 +1061,8 @@ static void task_upload(task_t *t)
 	//t->flag lets you know that its a multi-upload
 	//t->num_blocks lets you know the spacing between blocks to upload (i.e. number of peers)
 	//t->block_offset lets you know the offset to start uploading at (i.e. peer number)
-	if (osp2p_snscanf(t->buf, t->tail, "GET -%c %i %i %s OSP2P\n", t->flag, t->num_blocks, t->block_offset, t->filename) >= 0) {
-		message("Uploading with block offset %d and block spacing of %d", t->block_offset, t->num_blocks);
+	if (osp2p_snscanf(t->buf, t->tail, "GET -%c %i %i %s OSP2P\n", t->flag, t->num_uploading_peers, t->block_offset, t->filename) >= 0) {
+		message("Uploading with block offset %d and block spacing of %d", t->block_offset, t->num_uploading_peers);
 	}
 	else if (osp2p_snscanf(t->buf, t->tail, "GET %s OSP2P\n", t->filename) >= 0) {
 		message("Uploading serially");
@@ -1002,7 +1109,7 @@ static void task_upload(task_t *t)
 	
 	if (t->flag) //Run upload for multiple peers
 	{
-		peer_t current = t->peer_list;
+		peer_t *current = t->multi_peer_list;
 		while(current != NULL) 
 		{
 			if (current->block_offset == t->block_offset)
@@ -1020,7 +1127,7 @@ static void task_upload(task_t *t)
 				goto exit;
 			}
 
-			ret = read_to_taskbuf(t->disk_fd, t);
+			ret = read_to_taskbuf2(t->disk_fd, t);
 			if (ret == TBUF_ERROR) {
 				error("* Disk read error");
 				goto exit;
