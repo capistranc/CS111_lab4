@@ -36,7 +36,7 @@ static int listen_port;
  * a bounded buffer that simplifies reading from and writing to peers.
  */
 
-#define TASKBUFSIZ	50000
+#define TASKBUFSIZ	65535
 #define BLOCKSIZ 1024
 
  // Size of task_t::buf
@@ -100,7 +100,7 @@ typedef struct task {
 				// function initializes this list;
 				// task_pop_peer() removes peers from it, one
 				// at a time, if a peer misbehaves.
-
+				
 	peer_t *multi_peer_list;
 	
 	
@@ -247,7 +247,7 @@ taskbufresult_t read_to_taskbuf(int fd, task_t *t)
 		amt = read(fd, &t->buf[tailpos], headpos - tailpos);
 
 	if (amt == -1 && (errno == EINTR || errno == EAGAIN
-		|| errno == EWOULDBLOCK))
+			  || errno == EWOULDBLOCK))
 		return TBUF_AGAIN;
 	else if (amt == -1)
 		return TBUF_ERROR;
@@ -277,7 +277,7 @@ taskbufresult_t write_from_taskbuf(int fd, task_t *t)
 		amt = write(fd, &t->buf[headpos], TASKBUFSIZ - headpos);
 
 	if (amt == -1 && (errno == EINTR || errno == EAGAIN
-		|| errno == EWOULDBLOCK))
+			  || errno == EWOULDBLOCK))
 		return TBUF_AGAIN;
 	else if (amt == -1)
 		return TBUF_ERROR;
@@ -308,7 +308,7 @@ taskbufresult_t read_to_taskbuf2(int fd, task_t *t)
 		t->block_offset += *t->multi_peer_count * BLOCKSIZ;
 
 	if (amt == -1 && (errno == EINTR || errno == EAGAIN
-		|| errno == EWOULDBLOCK))
+			  || errno == EWOULDBLOCK))
 		return TBUF_AGAIN;
 	else if (amt == -1)
 		return TBUF_ERROR;
@@ -342,7 +342,7 @@ taskbufresult_t read_to_pbuf(peer_t *p, task_t *t)
 		p->block_offset += *t->multi_peer_count * BLOCKSIZ;
 
 	if (amt == -1 && (errno == EINTR || errno == EAGAIN
-		|| errno == EWOULDBLOCK))
+			  || errno == EWOULDBLOCK))
 		return TBUF_AGAIN;
 	else if (amt == -1)
 		return TBUF_ERROR;
@@ -374,7 +374,7 @@ taskbufresult_t write_from_pbuf(peer_t *p, task_t *t)
 		p->block_offset += *t->multi_peer_count * BLOCKSIZ;
 
 	if (amt == -1 && (errno == EINTR || errno == EAGAIN
-		|| errno == EWOULDBLOCK))
+			  || errno == EWOULDBLOCK))
 		return TBUF_AGAIN;
 	else if (amt == -1)
 		return TBUF_ERROR;
@@ -409,7 +409,7 @@ taskbufresult_t write_from_taskbuf2(int fd, task_t *t)
 		t->block_offset += *t->multi_peer_count * BLOCKSIZ;
 
 	if (amt == -1 && (errno == EINTR || errno == EAGAIN
-		|| errno == EWOULDBLOCK))
+			  || errno == EWOULDBLOCK))
 		return TBUF_AGAIN;
 	else if (amt == -1)
 		return TBUF_ERROR;
@@ -432,38 +432,38 @@ taskbufresult_t write_from_taskbuf2(int fd, task_t *t)
 // open_socket(addr, port)
 //	All the code to open a network connection to address 'addr'
 //	and port 'port' (or a listening socket on port 'port').
- int open_socket(struct in_addr addr, int port)
- {
- 	struct sockaddr_in saddr;
- 	socklen_t saddrlen;
- 	int fd, ret, yes = 1;
+int open_socket(struct in_addr addr, int port)
+{
+	struct sockaddr_in saddr;
+	socklen_t saddrlen;
+	int fd, ret, yes = 1;
 
- 	if ((fd = socket(AF_INET, SOCK_STREAM, 0)) == -1
- 		|| fcntl(fd, F_SETFD, FD_CLOEXEC) == -1
- 		|| setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1)
- 		goto error;
+	if ((fd = socket(AF_INET, SOCK_STREAM, 0)) == -1
+	    || fcntl(fd, F_SETFD, FD_CLOEXEC) == -1
+	    || setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1)
+		goto error;
 
- 	memset(&saddr, 0, sizeof(saddr));
- 	saddr.sin_family = AF_INET;
- 	saddr.sin_addr = addr;
- 	saddr.sin_port = htons(port);
+	memset(&saddr, 0, sizeof(saddr));
+	saddr.sin_family = AF_INET;
+	saddr.sin_addr = addr;
+	saddr.sin_port = htons(port);
 
- 	if (addr.s_addr == INADDR_ANY) {
- 		if (bind(fd, (struct sockaddr *) &saddr, sizeof(saddr)) == -1
- 			|| listen(fd, 4) == -1)
- 			goto error;
- 	} else {
- 		if (connect(fd, (struct sockaddr *) &saddr, sizeof(saddr)) == -1)
- 			goto error;
- 	}
+	if (addr.s_addr == INADDR_ANY) {
+		if (bind(fd, (struct sockaddr *) &saddr, sizeof(saddr)) == -1
+		    || listen(fd, 4) == -1)
+			goto error;
+	} else {
+		if (connect(fd, (struct sockaddr *) &saddr, sizeof(saddr)) == -1)
+			goto error;
+	}
 
- 	return fd;
+	return fd;
 
- 	error:
- 	if (fd >= 0)
- 		close(fd);
- 	return -1;
- }
+    error:
+	if (fd >= 0)
+		close(fd);
+	return -1;
+}
 
 
 /******************************************************************************
@@ -494,298 +494,294 @@ taskbufresult_t write_from_taskbuf2(int fd, task_t *t)
 //	finds a terminator line.  It returns the number of characters in the
 //	data portion.  It also terminates this client if the tracker's response
 //	is formatted badly.  (This code trusts the tracker.)
- static size_t read_tracker_response(task_t *t)
- {
- 	char *s;
- 	size_t split_pos = (size_t) -1, pos = 0;
- 	t->head = t->tail = 0;
+static size_t read_tracker_response(task_t *t)
+{
+	char *s;
+	size_t split_pos = (size_t) -1, pos = 0;
+	t->head = t->tail = 0;
 
- 	while (1) {
+	while (1) {
 		// Check for whether buffer is complete.
- 		for (; pos+3 < t->tail; pos++)
- 			if ((pos == 0 || t->buf[pos-1] == '\n')
- 				&& isdigit((unsigned char) t->buf[pos])
- 				&& isdigit((unsigned char) t->buf[pos+1])
- 				&& isdigit((unsigned char) t->buf[pos+2])) {
- 				if (split_pos == (size_t) -1)
- 					split_pos = pos;
- 				if (pos + 4 >= t->tail)
- 					break;
- 				if (isspace((unsigned char) t->buf[pos + 3])
- 					&& t->buf[t->tail - 1] == '\n') {
- 					t->buf[t->tail] = '\0';
- 				return split_pos;
- 			}
- 		}
+		for (; pos+3 < t->tail; pos++)
+			if ((pos == 0 || t->buf[pos-1] == '\n')
+			    && isdigit((unsigned char) t->buf[pos])
+			    && isdigit((unsigned char) t->buf[pos+1])
+			    && isdigit((unsigned char) t->buf[pos+2])) {
+				if (split_pos == (size_t) -1)
+					split_pos = pos;
+				if (pos + 4 >= t->tail)
+					break;
+				if (isspace((unsigned char) t->buf[pos + 3])
+				    && t->buf[t->tail - 1] == '\n') {
+					t->buf[t->tail] = '\0';
+					return split_pos;
+				}
+			}
 
 		// If not, read more data.  Note that the read will not block
 		// unless NO data is available.
- 		int ret = read_to_taskbuf(t->peer_fd, t);
- 		if (ret == TBUF_ERROR)
- 			die("tracker read error");
- 		else if (ret == TBUF_END)
- 			die("tracker connection closed prematurely!\n");
- 	}
- }
+		int ret = read_to_taskbuf(t->peer_fd, t);
+		if (ret == TBUF_ERROR)
+			die("tracker read error");
+		else if (ret == TBUF_END)
+			die("tracker connection closed prematurely!\n");
+	}
+}
 
 
 // start_tracker(addr, port)
 //	Opens a connection to the tracker at address 'addr' and port 'port'.
 //	Quits if there's no tracker at that address and/or port.
 //	Returns the task representing the tracker.
- task_t *start_tracker(struct in_addr addr, int port)
- {
- 	struct sockaddr_in saddr;
- 	socklen_t saddrlen;
- 	task_t *tracker_task = task_new(TASK_TRACKER);
- 	size_t messagepos;
+task_t *start_tracker(struct in_addr addr, int port)
+{
+	struct sockaddr_in saddr;
+	socklen_t saddrlen;
+	task_t *tracker_task = task_new(TASK_TRACKER);
+	size_t messagepos;
 
- 	if ((tracker_task->peer_fd = open_socket(addr, port)) == -1)
- 		die("cannot connect to tracker");
+	if ((tracker_task->peer_fd = open_socket(addr, port)) == -1)
+		die("cannot connect to tracker");
 
 	// Determine our local address as seen by the tracker.
- 	saddrlen = sizeof(saddr);
- 	if (getsockname(tracker_task->peer_fd,
- 		(struct sockaddr *) &saddr, &saddrlen) < 0)
- 		error("getsockname: %s\n", strerror(errno));
- 	else {
- 		assert(saddr.sin_family == AF_INET);
- 		listen_addr = saddr.sin_addr;
- 	}
+	saddrlen = sizeof(saddr);
+	if (getsockname(tracker_task->peer_fd,
+			(struct sockaddr *) &saddr, &saddrlen) < 0)
+		error("getsockname: %s\n", strerror(errno));
+	else {
+		assert(saddr.sin_family == AF_INET);
+		listen_addr = saddr.sin_addr;
+	}
 
 	// Collect the tracker's greeting.
- 	messagepos = read_tracker_response(tracker_task);
- 	message("* Tracker's greeting:\n%s", &tracker_task->buf[messagepos]);
+	messagepos = read_tracker_response(tracker_task);
+	message("* Tracker's greeting:\n%s", &tracker_task->buf[messagepos]);
 
- 	return tracker_task;
- }
+	return tracker_task;
+}
 
 
 // start_listen()
 //	Opens a socket to listen for connections from other peers who want to
 //	upload from us.  Returns the listening task.
- task_t *start_listen(void)
- {
- 	struct in_addr addr;
- 	task_t *t;
- 	int fd;
- 	addr.s_addr = INADDR_ANY;
+task_t *start_listen(void)
+{
+	struct in_addr addr;
+	task_t *t;
+	int fd;
+	addr.s_addr = INADDR_ANY;
 
 	// Set up the socket to accept any connection.  The port here is
 	// ephemeral (we can use any port number), so start at port
 	// 11112 and increment until we can successfully open a port.
- 	for (listen_port = 11112; listen_port < 13000; listen_port++)
- 	{
- 		if ((fd = open_socket(addr, listen_port)) != -1)
- 			goto bound;
- 		else if (errno != EADDRINUSE)
- 			die("cannot make listen socket");
- 	}
+	for (listen_port = 11112; listen_port < 13000; listen_port++)
+		if ((fd = open_socket(addr, listen_port)) != -1)
+			goto bound;
+		else if (errno != EADDRINUSE)
+			die("cannot make listen socket");
+
 	// If we get here, we tried about 200 ports without finding an
 	// available port.  Give up.
- 	die("Tried ~200 ports without finding an open port, giving up.\n");
+	die("Tried ~200 ports without finding an open port, giving up.\n");
 
- 	bound:
- 	message("* Listening on port %d\n", listen_port);
+    bound:
+	message("* Listening on port %d\n", listen_port);
 
- 	t = task_new(TASK_PEER_LISTEN);
- 	t->peer_fd = fd;
- 	return t;
- }
+	t = task_new(TASK_PEER_LISTEN);
+	t->peer_fd = fd;
+	return t;
+}
 
 
 // register_files(tracker_task, myalias)
 //	Registers this peer with the tracker, using 'myalias' as this peer's
 //	alias.  Also register all files in the current directory, allowing
 //	other peers to upload those files from us.
- static void register_files(task_t *tracker_task, const char *myalias)
- {
- 	DIR *dir;
- 	struct dirent *ent;
- 	struct stat s;
- 	char buf[PATH_MAX];
- 	size_t messagepos;
- 	assert(tracker_task->type == TASK_TRACKER);
+static void register_files(task_t *tracker_task, const char *myalias)
+{
+	DIR *dir;
+	struct dirent *ent;
+	struct stat s;
+	char buf[PATH_MAX];
+	size_t messagepos;
+	assert(tracker_task->type == TASK_TRACKER);
 
 
 	// Register address with the tracker.
- 	osp2p_writef(tracker_task->peer_fd, "ADDR %s %I:%d\n",
- 		myalias, listen_addr, listen_port);
- 	messagepos = read_tracker_response(tracker_task);
- 	message("* Tracker's response to our IP address registration:\n%s",
- 		&tracker_task->buf[messagepos]);
- 	if (tracker_task->buf[messagepos] != '2') {
- 		message("* The tracker reported an error, so I will not register files with it.\n");
- 		return;
- 	}
+	osp2p_writef(tracker_task->peer_fd, "ADDR %s %I:%d\n",
+		     myalias, listen_addr, listen_port);
+	messagepos = read_tracker_response(tracker_task);
+	message("* Tracker's response to our IP address registration:\n%s",
+		&tracker_task->buf[messagepos]);
+	if (tracker_task->buf[messagepos] != '2') {
+		message("* The tracker reported an error, so I will not register files with it.\n");
+		return;
+	}
 
 	// Register files with the tracker.
- 	message("* Registering our files with tracker\n");
- 	if ((dir = opendir(".")) == NULL)
- 		die("open directory: %s", strerror(errno));
- 	while ((ent = readdir(dir)) != NULL) {
- 		int namelen = strlen(ent->d_name);
-
+	message("* Registering our files with tracker\n");
+	if ((dir = opendir(".")) == NULL)
+		die("open directory: %s", strerror(errno));
+	while ((ent = readdir(dir)) != NULL) {
+		int namelen = strlen(ent->d_name);
+		
 		//Might want to limit the amount of files a peer can upload here
 
 		// don't depend on unreliable parts of the dirent structure
 		// and only report regular files.  Do not change these lines.
- 		if (stat(ent->d_name, &s) < 0 || !S_ISREG(s.st_mode)
- 			|| (namelen > 2 && ent->d_name[namelen - 2] == '.'
- 				&& (ent->d_name[namelen - 1] == 'c'
- 					|| ent->d_name[namelen - 1] == 'h'))
- 			|| (namelen > 1 && ent->d_name[namelen - 1] == '~'))
- 			continue;
+		if (stat(ent->d_name, &s) < 0 || !S_ISREG(s.st_mode)
+		    || (namelen > 2 && ent->d_name[namelen - 2] == '.'
+			&& (ent->d_name[namelen - 1] == 'c'
+			    || ent->d_name[namelen - 1] == 'h'))
+		    || (namelen > 1 && ent->d_name[namelen - 1] == '~'))
+			continue;
 
- 		osp2p_writef(tracker_task->peer_fd, "HAVE %s\n", ent->d_name);
- 		messagepos = read_tracker_response(tracker_task);
- 		if (tracker_task->buf[messagepos] != '2')
- 			error("* Tracker error message while registering '%s':\n%s",
- 				ent->d_name, &tracker_task->buf[messagepos]);
- 	}
+		osp2p_writef(tracker_task->peer_fd, "HAVE %s\n", ent->d_name);
+		messagepos = read_tracker_response(tracker_task);
+		if (tracker_task->buf[messagepos] != '2')
+			error("* Tracker error message while registering '%s':\n%s",
+			      ent->d_name, &tracker_task->buf[messagepos]);
+	}
 
- 	closedir(dir);
- }
+	closedir(dir);
+}
 
 
 // parse_peer(s, len)
 //	Parse a peer specification from the first 'len' characters of 's'.
 //	A peer specification looks like "PEER [alias] [addr]:[port]".
- static peer_t *parse_peer(const char *s, size_t len)
- {
- 	peer_t *p = (peer_t *) malloc(sizeof(peer_t));
- 	if (p) 
- 	{
- 		p->next = NULL;
- 		if (osp2p_snscanf(s, len, "PEER %s %I:%d",
- 			p->alias, &p->addr, &p->port) >= 0
- 			&& p->port > 0 && p->port <= 65535)
- 			return p;
- 	}
- 	free(p);
- 	return NULL;
- }
+static peer_t *parse_peer(const char *s, size_t len)
+{
+	peer_t *p = (peer_t *) malloc(sizeof(peer_t));
+	if (p) 
+	{
+		p->next = NULL;
+		if (osp2p_snscanf(s, len, "PEER %s %I:%d",
+				  p->alias, &p->addr, &p->port) >= 0
+		    && p->port > 0 && p->port <= 65535)
+			return p;
+	}
+	free(p);
+	return NULL;
+}
 
 
- static void remove_and_advance(task_t* t, peer_t* current, peer_t* peer_list, int *count) {
+static void remove_and_advance(task_t* t, peer_t* current, peer_t* peer_list, int *count) {
 	//if there is a peer after this one
- 	if (current->next) {
+	if (current->next) {
 		//advance to it and remove the previous (formerly current) peer
- 		current = current->next;
- 		task_pop_peer(t, current->prev, peer_list, count);
- 	} else {
+		current = current->next;
+		task_pop_peer(t, current->prev, peer_list, count);
+	} else {
 		//we are at end of peer list, so just pop off current peer and set current to NULL
- 		task_pop_peer(t, current, peer_list, count);
- 		current = NULL;
- 	}
- }
+		task_pop_peer(t, current, peer_list, count);
+		current = NULL;
+	}
+}
 
 //add peer into doubly linked peer list
- 
- static void add_peer(task_t* t, peer_t* p, peer_t* peer_list, int *count) 
- {	
- 	error("1test %d\n", p->port);
- 	if (peer_list != NULL) 
- 	{
- 		error("1\n");
- 		peer_list->prev = p;
- 		p->next = peer_list;
- 	}
-
- 	peer_list = p;
- 	if (t) 
- 	{
- 		error("3\n");
- 		*count++;
- 	}
- 	error("2\n");
+static void add_peer(task_t* t, peer_t* p, peer_t* peer_list, int *count) 
+{	
+	error("1test %d\n", p->port);
+	if (peer_list != NULL) 
+	{
+		error("1\n");
+		peer_list->prev = p;
+		p->next = peer_list;
+	}
+	peer_list = p;
+	if (t) {
+		//error("3\n");
+		*count++;
+	}
+	//error("2\n");
 	//printf("count: nah peer_list_count: %d \n", *t->peer_count);
- }
+}
 
 // start_download(tracker_task, filename)
 //	Return a TASK_DOWNLOAD task for downloading 'filename' from peers.
 //	Contacts the tracker for a list of peers that have 'filename',
 //	and returns a task containing that peer list.
- task_t *start_download(task_t *tracker_task, const char *filename)
- {
- 	char *s1, *s2;
- 	task_t *t = NULL;
- 	peer_t *p;
- 	size_t messagepos;
- 	assert(tracker_task->type == TASK_TRACKER);
- 	int len = strlen(filename);
-
+task_t *start_download(task_t *tracker_task, const char *filename)
+{
+	char *s1, *s2;
+	task_t *t = NULL;
+	peer_t *p;
+	size_t messagepos;
+	assert(tracker_task->type == TASK_TRACKER);
+	int len = strlen(filename);
+	
 	//Exercise 2 Code
- 	if (len >= FILENAMESIZ)
- 	{
- 		error("Filename too long");
- 		goto exit;
- 	}
+	if (len >= FILENAMESIZ)
+	{
+		error("Filename too long");
+		goto exit;
+	}
 
- 	int i;
- 	for (i = 1; i < len; i++)
- 	{
- 		if (filename[i] == '/')
- 		{
- 			error("Peer attempting to access outside working directory");
- 			goto exit;
- 		}
- 	}
+	int i;
+	for (i = 1; i < len; i++)
+	{
+		if (filename[i] == '/')
+		{
+			error("Peer attempting to access outside working directory");
+			goto exit;
+		}
+	}
 
 
- 	message("* Finding peers for '%s'\n", filename);
+	message("* Finding peers for '%s'\n", filename);
 
- 	osp2p_writef(tracker_task->peer_fd, "WANT %s\n", filename);
- 	messagepos = read_tracker_response(tracker_task);
- 	if (tracker_task->buf[messagepos] != '2') {
- 		error("* Tracker error message while requesting '%s':\n%s",
- 			filename, &tracker_task->buf[messagepos]);
- 		goto exit;
- 	}
+	osp2p_writef(tracker_task->peer_fd, "WANT %s\n", filename);
+	messagepos = read_tracker_response(tracker_task);
+	if (tracker_task->buf[messagepos] != '2') {
+		error("* Tracker error message while requesting '%s':\n%s",
+		      filename, &tracker_task->buf[messagepos]);
+		goto exit;
+	}
 
- 	if (!(t = task_new(TASK_DOWNLOAD))) {
- 		error("* Error while allocating task");
- 		goto exit;
- 	}
-
+	if (!(t = task_new(TASK_DOWNLOAD))) {
+		error("* Error while allocating task");
+		goto exit;
+	}
+	
 	//Changed this to strncpy instead of strcpy
- 	strncpy(t->filename, filename, len);
+	strncpy(t->filename, filename, len);
 
 	// add peers
- 	s1 = tracker_task->buf;
-
- 	while ((s2 = memchr(s1, '\n', (tracker_task->buf + messagepos) - s1))) 
- 	{
- 		if (!(p = parse_peer(s1, s2 - s1)))
- 			die("osptracker responded to WANT command with unexpected format!\n");
+	s1 = tracker_task->buf;
+	
+	while ((s2 = memchr(s1, '\n', (tracker_task->buf + messagepos) - s1))) 
+	{
+		if (!(p = parse_peer(s1, s2 - s1)))
+			die("osptracker responded to WANT command with unexpected format!\n");
 		/*p->next = t->peer_list;
 		t->peer_list = p;*/
 		//error("test %d\n", p->port);
+		
+		//add_peer(t, p, t->peer_list, t->peer_count);
+		
+		if (t->peer_list != NULL)
+		{
+			error("1\n");
+			t->peer_list->prev = p;
+			p->next = t->peer_list;
+		}
 
- 		//add_peer(t, p, t->peer_list, t->peer_count);
+		t->peer_list = p;
+		t->peer_count++;
 
-
-
- 		if (t->peer_list != NULL)
- 		{
- 			t->peer_list->prev = p;
- 			p->next = t->peer_list;
- 		}
-
- 		t->peer_list = p;
- 		t->peer_count++;
-
- 		s1 = s2 + 1;
- 	}
+		s1 = s2 + 1;
+		//count++;
+	}
 
 	//t->peer_count = count;
+	
+	if (s1 != tracker_task->buf + messagepos)
+		die("osptracker's response to WANT has unexpected format!\n");
 
- 	if (s1 != tracker_task->buf + messagepos)
- 		die("osptracker's response to WANT has unexpected format!\n");
-
- 	exit:
- 	return t;
- }
+ exit:
+	return t;
+}
 
 
 // task_download(t, tracker_task)
@@ -793,103 +789,84 @@ taskbufresult_t write_from_taskbuf2(int fd, task_t *t)
 //	directory.  't' was created by start_download().
 //	Starts with the first peer on 't's peer list, then tries all peers
 //	until a download is successful.
- static void task_download(task_t *t, task_t *tracker_task)
- {
- 	int i, ret = -1, num_blocks = 0;
- 	double avg_rate;
- 	assert((!t || t->type == TASK_DOWNLOAD || t->type == TASK_DOWNLOAD_MULT_PEERS)
- 		&& tracker_task->type == TASK_TRACKER);
+static void task_download(task_t *t, task_t *tracker_task)
+{
+	int i, ret = -1, num_blocks = 0;
+	double avg_rate;
+	assert((!t || t->type == TASK_DOWNLOAD || t->type == TASK_DOWNLOAD_MULT_PEERS)
+	       && tracker_task->type == TASK_TRACKER);
 
 	// Quit if no peers
- 	if (!t || !t->peer_list) 
- 	{
- 		error("* No peers are willing to serve '%s'\n",
- 			(t ? t->filename : "that file"));
- 		task_free(t);
- 		return;
- 	} 
-
+	if (!t || !t->peer_list) {
+		error("* No peers are willing to serve '%s'\n",
+		      (t ? t->filename : "that file"));
+		task_free(t);
+		return;
+	} 
+	
 	//error("DO WE GET HERE\n");
 	// Open disk file for the result.
 	// If the filename already exists, save the file in a name like
 	// "foo.txt~1~".  However, if there are 50 local files, don't download
 	// at all.
- 	for (i = 0; i < 50; i++) 
- 	{
- 		if (i == 0)
- 			strcpy(t->disk_filename, t->filename);
- 		else
- 			sprintf(t->disk_filename, "%s~%d~", t->filename, i);
- 		t->disk_fd = open(t->disk_filename,
- 			O_WRONLY | O_CREAT | O_EXCL, 0666);
- 		if (t->disk_fd == -1 && errno != EEXIST) {
- 			error("* Cannot open local file");
- 			goto try_again;
- 		} else if (t->disk_fd != -1) {
- 			message("* Saving result to '%s'\n", t->disk_filename);
- 			break;
- 		}
-
-
- 	}
-
- 	if (t->disk_fd == -1) 
- 	{
- 		error("* Too many local files like '%s' exist already.\n\
- 			* Try 'rm %s.~*~' to remove them.\n", t->filename, t->filename);
- 		task_free(t);
- 		return;
- 	}
-
+	for (i = 0; i < 50; i++) {
+		if (i == 0)
+			strcpy(t->disk_filename, t->filename);
+		else
+			sprintf(t->disk_filename, "%s~%d~", t->filename, i);
+		t->disk_fd = open(t->disk_filename,
+				  O_WRONLY | O_CREAT | O_EXCL, 0666);
+		if (t->disk_fd == -1 && errno != EEXIST) {
+			error("* Cannot open local file");
+			goto try_again;
+		} else if (t->disk_fd != -1) {
+			message("* Saving result to '%s'\n", t->disk_filename);
+			break;
+		}
+	}
+	if (t->disk_fd == -1) {
+		error("* Too many local files like '%s' exist already.\n\
+* Try 'rm %s.~*~' to remove them.\n", t->filename, t->filename);
+		task_free(t);
+		return;
+	}
+	
 	/*else if (t->peer_list->addr.s_addr == listen_addr.s_addr
 		   && t->peer_list->port == listen_port)
 		goto try_again;*/
 
 
 	//remove this peer from the peer list
-peer_t *current = t->peer_list;
-while (current != NULL) 
-{
-	//error("we get here? %d\n", current->port);
-	if (current->addr.s_addr == listen_addr.s_addr && current->port == listen_port) 
-	{
-		error("peer pop\n");
-		task_pop_peer(t, current, t->peer_list, t->peer_count);
+	peer_t *current = t->peer_list;
+	while (current != NULL) {
+		if (current->addr.s_addr == listen_addr.s_addr
+		   && current->port == listen_port) {
+			   task_pop_peer(t, current, t->peer_list, t->peer_count);
+		   }
 	}
-
-	current = current->next;
-}
-
+	
 	// Connect to the peer and write the GET command
 	// Code was modified in order to download from multiple peers at a time, instead of storing
 	// The file descriptors in the task, the pertinent fd are stored on the peer
-current = t->peer_list;
-t->multi_peer_count = 0;
-
-while (current != NULL)
-{
-	message("* Connecting to %s:%d to download '%s'\n",	inet_ntoa(current->addr), current->port, t->filename);
-
+	current = t->peer_list;
+	t->multi_peer_count = 0;
+	while (current != NULL)
+	{
+		message("* Connecting to %s:%d to download '%s'\n",
+		inet_ntoa(current->addr), current->port, t->filename);
 		current->file_fd = open_socket(current->addr, current->port); //returns file descriptor to peers open socket
 		
-		message("in while loop? %d\n", current->port);
-
 		//if connection not established
-		if (current->file_fd == -1) 
-		{
+		if (current->file_fd == -1) {
 			error("* Cannot connect to peer: %s\n", strerror(errno));
 			//we remove this peer from our task altogther and move onto the next peer in line
 			remove_and_advance(t, current, t->peer_list, t->peer_count);
 		}
 		
-		message(" before before add_peer? %d\n", current->port);
 		current->block_offset = *t->multi_peer_count;
 		
 		//add current onto task list of special peers
-		message("before add_peer? %d\n", current->port);
-
 		add_peer(t, current, t->multi_peer_list, t->multi_peer_count);
-		message("we get here now? %d\n", current->port);
 		
 		//remove current from task list of regular peers
 		remove_and_advance(t, current, t->peer_list, t->peer_count);
@@ -923,7 +900,7 @@ while (current != NULL)
 			t->in_progress_transfers--;
 			continue;
 		}
-
+	
 		
 		//this should be modified to only write when there is a full block to write
 		//should only write that full block
@@ -949,7 +926,7 @@ while (current != NULL)
 				error("* Peer connection is too slow, dropping connection\n");
 				goto not_special_peer;
 			}
-
+	
 		}
 		
 		//move on to next peer unless next peer is null, then move to beginning of multi peer list
@@ -984,7 +961,7 @@ while (current != NULL)
 	if (current != NULL)
 	{
 		message("* Connecting to %s:%d to download '%s'\n",
-			inet_ntoa(current->addr), current->port, t->filename);
+		inet_ntoa(current->addr), current->port, t->filename);
 		t->peer_fd = open_socket(current->addr, current->port); //returns file descriptor to peers open socket
 		if (t->peer_fd == -1) {
 			error("* Cannot connect to peer: %s\n", strerror(errno));
@@ -1003,10 +980,10 @@ while (current != NULL)
 			goto try_again;
 		} else if (ret == TBUF_END && t->head == t->tail)
 			/* End of file */
-		break;
-
-
-
+			break;
+	
+	
+	
 		ret = write_from_taskbuf(t->disk_fd, t);
 		if (ret == TBUF_ERROR) {
 			error("* Disk write error");
@@ -1027,7 +1004,7 @@ while (current != NULL)
 				error("* Peer connection is too slow, dropping connection\n");
 				goto try_again;
 			}
-
+	
 		}
 		
 	}
@@ -1041,7 +1018,7 @@ while (current != NULL)
 		// and can serve it to others!  (But ignore tracker errors.)
 		if (strcmp(t->filename, t->disk_filename) == 0) {
 			osp2p_writef(tracker_task->peer_fd, "HAVE %s\n",
-				t->filename);
+				     t->filename);
 			(void) read_tracker_response(tracker_task);
 		}
 		task_free(t);
@@ -1049,7 +1026,7 @@ while (current != NULL)
 	}
 	error("* Download was empty, trying next peer\n");
 
-	try_again:
+    try_again:
 	if (t->disk_filename[0])
 		unlink(t->disk_filename);
 	// recursive call
@@ -1070,9 +1047,9 @@ static task_t *task_listen(task_t *listen_task)
 	assert(listen_task->type == TASK_PEER_LISTEN);
 
 	fd = accept(listen_task->peer_fd,
-		(struct sockaddr *) &peer_addr, &peer_addrlen);
+		    (struct sockaddr *) &peer_addr, &peer_addrlen);
 	if (fd == -1 && (errno == EINTR || errno == EAGAIN
-		|| errno == EWOULDBLOCK))
+			 || errno == EWOULDBLOCK))
 		return NULL;
 	else if (fd == -1)
 		die("accept");
@@ -1100,8 +1077,8 @@ static void task_upload(task_t *t)
 			error("* Cannot read from connection");
 			goto exit;
 		} else if (ret == TBUF_END
-			|| (t->tail && t->buf[t->tail-1] == '\n'))
-		break;
+			   || (t->tail && t->buf[t->tail-1] == '\n'))
+			break;
 	}
 	
 	
@@ -1130,33 +1107,33 @@ static void task_upload(task_t *t)
 	 //Detect too long file name
 	if (len > FILENAMESIZ){ //Amount of chars i 'GET %s OSP2P\n'
 		error("Filename requested is too long");
-	goto exit;
-}
-
-int i;
-for (i = 1; i < len; i++) 
-{
-	if (t->filename[i] == '/')
-	{
-		error("Peer attempting to access outside working directory");
 		goto exit;
 	}
-}
+	
+	int i;
+	for (i = 1; i < len; i++) 
+	{
+		if (t->filename[i] == '/')
+		{
+			error("Peer attempting to access outside working directory");
+			goto exit;
+		}
+	}
 
 	//End of exercise 2 code
+	
+	t->head = t->tail = 0;
 
-t->head = t->tail = 0;
-
-t->disk_fd = open(t->filename, O_RDONLY);
-if (t->disk_fd == -1) {
-	error("* Cannot open file %s", t->filename);
-	goto exit;
-}
-
-
+	t->disk_fd = open(t->filename, O_RDONLY);
+	if (t->disk_fd == -1) {
+		error("* Cannot open file %s", t->filename);
+		goto exit;
+	}
+	
+	
 	//Instead of writing to the tasks peer_fd, we store this on the peers file_fd instead.
 
-
+	
 	if (t->flag) //Run upload for multiple peers
 	{
 		peer_t *current = t->multi_peer_list;
@@ -1183,8 +1160,8 @@ if (t->disk_fd == -1) {
 				goto exit;
 			} else if (ret == TBUF_END && t->head == t->tail)
 				/* End of file */
-			break;
-		}
+				break;
+			}
 	} 
 	else //Do the standard procedure
 	{
@@ -1204,12 +1181,12 @@ if (t->disk_fd == -1) {
 				goto exit;
 			} else if (ret == TBUF_END && t->head == t->tail)
 				/* End of file */
-			break;
+				break;
 		}
 	}
 	message("* Upload of %s complete\n", t->filename);
 
-	exit:
+    exit:
 	task_free(t);
 }
 
@@ -1226,11 +1203,11 @@ int main(int argc, char *argv[])
 	struct passwd *pwent;
 
 	osp2p_sscanf("164.67.100.231:12997", "%I:%d",
-		&tracker_addr, &tracker_port);
-	if ((pwent = getpwuid(getuid()))) 
-	{
+		     &tracker_addr, &tracker_port);
+	if ((pwent = getpwuid(getuid()))) {
 		myalias = (const char *) malloc(strlen(pwent->pw_name) + 20);
-		sprintf((char *) myalias, "%s%d", pwent->pw_name, (int) time(NULL));
+		sprintf((char *) myalias, "%s%d", pwent->pw_name,
+			(int) time(NULL));
 	} else {
 		myalias = (const char *) malloc(40);
 		sprintf((char *) myalias, "osppeer%d", (int) getpid());
@@ -1240,20 +1217,19 @@ int main(int argc, char *argv[])
 	signal(SIGPIPE, SIG_IGN);
 
 	// Process arguments
-	argprocess:
+    argprocess:
 	if (argc >= 3 && strcmp(argv[1], "-t") == 0
-		&& (osp2p_sscanf(argv[2], "%I:%d", &tracker_addr, &tracker_port) >= 0
-			|| osp2p_sscanf(argv[2], "%d", &tracker_port) >= 0
-			|| osp2p_sscanf(argv[2], "%I", &tracker_addr) >= 0)
-		&& tracker_port > 0 && tracker_port <= 65535) 
-	{
+	    && (osp2p_sscanf(argv[2], "%I:%d", &tracker_addr, &tracker_port) >= 0
+		|| osp2p_sscanf(argv[2], "%d", &tracker_port) >= 0
+		|| osp2p_sscanf(argv[2], "%I", &tracker_addr) >= 0)
+	    && tracker_port > 0 && tracker_port <= 65535) {
 		argc -= 2, argv += 2;
 		goto argprocess;
 	} else if (argc >= 2 && argv[1][0] == '-' && argv[1][1] == 't'
-		&& (osp2p_sscanf(argv[1], "-t%I:%d", &tracker_addr, &tracker_port) >= 0
-			|| osp2p_sscanf(argv[1], "-t%d", &tracker_port) >= 0
-			|| osp2p_sscanf(argv[1], "-t%I", &tracker_addr) >= 0)
-		&& tracker_port > 0 && tracker_port <= 65535) {
+		   && (osp2p_sscanf(argv[1], "-t%I:%d", &tracker_addr, &tracker_port) >= 0
+		       || osp2p_sscanf(argv[1], "-t%d", &tracker_port) >= 0
+		       || osp2p_sscanf(argv[1], "-t%I", &tracker_addr) >= 0)
+		   && tracker_port > 0 && tracker_port <= 65535) {
 		--argc, ++argv;
 		goto argprocess;
 	} else if (argc >= 3 && strcmp(argv[1], "-d") == 0) {
@@ -1267,11 +1243,11 @@ int main(int argc, char *argv[])
 		--argc, ++argv;
 		goto argprocess;
 	} else if (argc >= 2 && (strcmp(argv[1], "--help") == 0
-		|| strcmp(argv[1], "-h") == 0)) {
+				 || strcmp(argv[1], "-h") == 0)) {
 		printf("Usage: osppeer [-tADDR:PORT | -tPORT] [-dDIR] [-b]\n"
-			"Options: -tADDR:PORT  Set tracker address and/or port.\n"
-			"         -dDIR        Upload and download files from directory DIR.\n"
-			);
+"Options: -tADDR:PORT  Set tracker address and/or port.\n"
+"         -dDIR        Upload and download files from directory DIR.\n"
+);
 		exit(0);
 	}
 
@@ -1279,13 +1255,13 @@ int main(int argc, char *argv[])
 	tracker_task = start_tracker(tracker_addr, tracker_port);
 	listen_task = start_listen();
 	register_files(tracker_task, myalias);
-
+	
 	pid_t pid;
 	int status;
 	int num_downloads = 0, num_uploads = 0;
+	
 
-
-		// First, download files named on command line.
+	// First, download files named on command line.
 	for (; argc > 1; argc--, argv++)
 	{
 		if ((t = start_download(tracker_task, argv[1]))) 
